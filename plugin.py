@@ -181,39 +181,53 @@ class Markov(callbacks.Plugin):
             return m.args[1].split()
 
     def doPrivmsg(self, irc, msg):
+
         if irc.isChannel(msg.args[0]):
-            speakChan = msg.args[0]
-            dbChan = plugins.getChannel(speakChan)
-            canSpeak = False
-            now = time.time()
-            throttle = self.registryValue('randomSpeaking.throttleTime',
-                                          speakChan)
-            prob = self.registryValue('randomSpeaking.probability', speakChan)
-            delay = self.registryValue('randomSpeaking.maxDelay', speakChan)
-            if now > self.lastSpoke + throttle:
-                canSpeak = True
-            if canSpeak and random.random() < prob:
+
+            isNickInMessage = irc.nick in msg.args[1]
+            isCommandPrefixInMessage = any("@" in s for s in msg.args) #HACK, fix with conf.supybot.reply.whenAddressedBy.chars ?
+
+            if isNickInMessage and not isCommandPrefixInMessage:
+                speakChan = msg.args[0]
+                dbChan = plugins.getChannel(speakChan)
+                now = time.time()
                 f = self._markov(speakChan, irc, prefixNick=False,
                                  to=speakChan, Random=True)
-                schedule.addEvent(lambda: self.q.enqueue(f), now + delay)
-                self.lastSpoke = now + delay
-            words = self.tokenize(msg)
-            # This shouldn't happen often (CTCP messages being the possible
-            # exception)
-            if not words:
-                return
-            if self.registryValue('ignoreBotCommands', speakChan) and \
-                    callbacks.addressed(irc.nick, msg):
-                return
-            words.insert(0, None)
-            words.insert(0, None)
-            words.append(None)
-            def doPrivmsg(db):
-                for (first, second, follower) in utils.seq.window(words, 3):
-                    db.addPair(dbChan, first, second, follower,
-                               isFirst=(first is None and second is None),
-                               isLast=(follower is None))
-            self.q.enqueue(doPrivmsg)
+                schedule.addEvent(lambda: self.q.enqueue(f), now)
+
+            elif not isNickInMessage:
+                speakChan = msg.args[0]
+                dbChan = plugins.getChannel(speakChan)
+                canSpeak = False
+                now = time.time()
+                throttle = self.registryValue('randomSpeaking.throttleTime',
+                                              speakChan)
+                prob = self.registryValue('randomSpeaking.probability', speakChan)
+                delay = self.registryValue('randomSpeaking.maxDelay', speakChan)
+                if now > self.lastSpoke + throttle:
+                    canSpeak = True
+                if canSpeak and random.random() < prob:
+                    f = self._markov(speakChan, irc, prefixNick=False,
+                                     to=speakChan, Random=True)
+                    schedule.addEvent(lambda: self.q.enqueue(f), now + delay)
+                    self.lastSpoke = now + delay
+                words = self.tokenize(msg)
+                # This shouldn't happen often (CTCP messages being the possible
+                # exception)
+                if not words:
+                    return
+                if self.registryValue('ignoreBotCommands', speakChan) and \
+                        callbacks.addressed(irc.nick, msg):
+                    return
+                words.insert(0, None)
+                words.insert(0, None)
+                words.append(None)
+                def doPrivmsg(db):
+                    for (first, second, follower) in utils.seq.window(words, 3):
+                        db.addPair(dbChan, first, second, follower,
+                                   isFirst=(first is None and second is None),
+                                   isLast=(follower is None))
+                self.q.enqueue(doPrivmsg)
 
     def _markov(self, channel, irc, word1=None, word2=None, **kwargs):
         def f(db):
